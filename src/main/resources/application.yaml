@@ -64,6 +64,7 @@ app:
     batch:
       max-size-per-portfolio: ${BATCH_MAX_SIZE_PER_PORTFOLIO:100}
       flush-interval-ms: ${BATCH_FLUSH_INTERVAL_MS:200}
+      max-retries: ${BATCH_MAX_RETRIES:3}
 
   kafka:
     trade-topic: ${TRADE_TOPIC_NAME:raw-trades-proto}
@@ -71,6 +72,3 @@ app:
   outbox:
     poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:500}
     batch-size: ${OUTBOX_BATCH_SIZE:100}
-
-  
-

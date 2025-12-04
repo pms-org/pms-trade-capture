@@ -50,9 +50,9 @@ import jakarta.annotation.PreDestroy;
  * - Messages are buffered with offsets in BatchingIngestService
  * - Offsets are committed ONLY after successful DB persistence
  * - If crash occurs before offset commit:
- *   * Stream replays from last committed offset
- *   * DB idempotency handles duplicate trade_ids
- *   * No data is lost
+ * * Stream replays from last committed offset
+ * * DB idempotency handles duplicate trade_ids
+ * * No data is lost
  *
  * Ordering:
  * - Simulator routes all trades for a portfolio to same partition
@@ -74,9 +74,9 @@ public class TradeCaptureStreamListener {
     private Consumer consumer;
 
     public TradeCaptureStreamListener(Environment streamEnvironment,
-                                      RabbitStreamConfig streamConfig,
-                                      BatchingIngestService batchingIngestService,
-                                      DlqRepository dlqRepository) {
+            RabbitStreamConfig streamConfig,
+            BatchingIngestService batchingIngestService,
+            DlqRepository dlqRepository) {
         this.streamEnvironment = streamEnvironment;
         this.streamConfig = streamConfig;
         this.batchingIngestService = batchingIngestService;
@@ -138,7 +138,7 @@ public class TradeCaptureStreamListener {
      * Offset commit happens in BatchingIngestService AFTER DB persistence.
      *
      * @param messageBody Raw bytes from stream
-     * @param offset Stream offset for this message
+     * @param offset      Stream offset for this message
      */
     private void handleMessage(byte[] messageBody, long offset) {
         try {

@@ -1,4 +1,5 @@
 package com.pms.pms_trade_capture.service;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -11,6 +12,8 @@ import java.util.stream.Collectors;
 
 import com.pms.pms_trade_capture.domain.OutboxEvent;
 import com.pms.pms_trade_capture.domain.SafeStoreTrade;
+import com.pms.pms_trade_capture.domain.DlqEntry;
+import com.pms.pms_trade_capture.repository.DlqRepository;
 import com.pms.pms_trade_capture.dto.TradeEventMapper;
 import com.pms.pms_trade_capture.repository.OutboxRepository;
 import com.pms.pms_trade_capture.repository.SafeStoreRepository;
@@ -34,6 +37,7 @@ public class BatchingIngestService {
 
     private final SafeStoreRepository safeStoreRepository;
     private final OutboxRepository outboxRepository;
+    private final DlqRepository dlqRepository;
 
     @Value("${app.ingest.batch.max-size-per-portfolio}")
     private int maxSizePerPortfolio;
@@ -41,28 +45,35 @@ public class BatchingIngestService {
     @Value("${app.ingest.batch.flush-interval-ms}")
     private long flushIntervalMs;
 
+    @Value("${app.ingest.batch.max-retries:3}")
+    private int maxRetries;
+
     // Buffer: portfolioId -> ordered list of pending messages (trade + offset)
     private final Map<String, List<PendingStreamMessage>> buffers = new ConcurrentHashMap<>();
 
     // Track last flush time per portfolio
     private final Map<String, Long> lastFlushTime = new ConcurrentHashMap<>();
 
+    // Track retry count per portfolio for failed flushes
+    private final Map<String, Integer> retryCount = new ConcurrentHashMap<>();
+
     // Scheduled executor for time-based flushing
     private ScheduledExecutorService scheduler;
 
     /**
      * -- SETTER --
-     *  Set the RabbitMQ Stream consumer reference for offset commits.
-     *  Must be called by the stream listener after consumer is created.
+     * Set the RabbitMQ Stream consumer reference for offset commits.
+     * Must be called by the stream listener after consumer is created.
      */
-    // Reference to RabbitMQ Stream consumer for offset commits
     @Setter
     private volatile Consumer streamConsumer;
 
     public BatchingIngestService(SafeStoreRepository safeStoreRepository,
-                                 OutboxRepository outboxRepository) {
+            OutboxRepository outboxRepository,
+            DlqRepository dlqRepository) {
         this.safeStoreRepository = safeStoreRepository;
         this.outboxRepository = outboxRepository;
+        this.dlqRepository = dlqRepository;
     }
 
     @PostConstruct
@@ -78,8 +89,7 @@ public class BatchingIngestService {
                 this::flushStaleBuffers,
                 flushIntervalMs,
                 flushIntervalMs / 2, // Check twice as often as the threshold
-                TimeUnit.MILLISECONDS
-        );
+                TimeUnit.MILLISECONDS);
 
         log.info("BatchingIngestService initialized: maxSize={}, flushInterval={}ms",
                 maxSizePerPortfolio, flushIntervalMs);
@@ -177,17 +187,49 @@ public class BatchingIngestService {
                 long highestOffset = messagesCopy.get(messagesCopy.size() - 1).getOffset();
                 commitStreamOffset(highestOffset);
 
+                // Reset retry count on success
+                retryCount.remove(portfolioId);
+
                 log.debug("Flushed {} messages for portfolio {}, committed offset {}",
                         messagesCopy.size(), portfolioId, highestOffset);
             } else {
-                // DB failed - do NOT commit offset, put messages back
-                log.warn("DB write failed for portfolio {}, messages will be replayed", portfolioId);
-                buffers.computeIfAbsent(portfolioId, k -> new ArrayList<>()).addAll(0, messagesCopy);
+                // DB failed - check retry count
+                int currentRetries = retryCount.getOrDefault(portfolioId, 0) + 1;
+                retryCount.put(portfolioId, currentRetries);
+
+                if (currentRetries > maxRetries) {
+                    // Max retries exceeded - send to DLQ and commit offset to avoid infinite replay
+                    log.error("Max retries ({}) exceeded for portfolio {}, sending {} messages to DLQ",
+                            maxRetries, portfolioId, messagesCopy.size());
+                    saveBatchToDlq(messagesCopy, "DB write failed after " + maxRetries + " retries");
+                    long highestOffset = messagesCopy.get(messagesCopy.size() - 1).getOffset();
+                    commitStreamOffset(highestOffset);
+                    retryCount.remove(portfolioId);
+                } else {
+                    // Retry - put messages back
+                    log.warn("DB write failed for portfolio {} (attempt {}), messages will be replayed",
+                            portfolioId, currentRetries);
+                    buffers.computeIfAbsent(portfolioId, k -> new ArrayList<>()).addAll(0, messagesCopy);
+                }
             }
         } catch (Exception e) {
             log.error("Failed to flush buffer for portfolio {}", portfolioId, e);
-            // Put events back in buffer for retry
-            buffers.computeIfAbsent(portfolioId, k -> new ArrayList<>()).addAll(0, messages);
+            // Check retry count for exceptions too
+            int currentRetries = retryCount.getOrDefault(portfolioId, 0) + 1;
+            retryCount.put(portfolioId, currentRetries);
+
+            if (currentRetries > maxRetries) {
+                // Max retries exceeded - send to DLQ and commit offset
+                log.error("Max retries ({}) exceeded for portfolio {} due to exception, sending messages to DLQ",
+                        maxRetries, portfolioId);
+                saveBatchToDlq(messages, "Flush exception after " + maxRetries + " retries: " + e.getMessage());
+                long highestOffset = messages.get(messages.size() - 1).getOffset();
+                commitStreamOffset(highestOffset);
+                retryCount.remove(portfolioId);
+            } else {
+                // Put events back in buffer for retry
+                buffers.computeIfAbsent(portfolioId, k -> new ArrayList<>()).addAll(0, messages);
+            }
         }
     }
 
@@ -203,45 +245,31 @@ public class BatchingIngestService {
     @Transactional
     public boolean writeBatchToDatabase(List<PendingStreamMessage> messages) {
         try {
-            // Extract trade protos from pending messages
             List<TradeEventProto> trades = messages.stream()
                     .map(PendingStreamMessage::getTrade)
                     .collect(Collectors.toList());
 
-            // Convert protobuf messages to SafeStoreTrade entities
             List<SafeStoreTrade> safeTrades = trades.stream()
                     .map(TradeEventMapper::protoToSafeStoreTrade)
                     .collect(Collectors.toList());
 
             // Convert protobuf messages to OutboxEvent entities
             // IMPORTANT: ensure payload is ALWAYS the protobuf bytes (proto.toByteArray()).
-            // Defensive: build OutboxEvent explicitly here to avoid accidental assignment of
+            // Defensive: build OutboxEvent explicitly here to avoid accidental assignment
+            // of
             // numeric/offset values into the payload field.
             List<OutboxEvent> outboxEvents = trades.stream().map(proto -> {
                 byte[] protobufPayload = proto.toByteArray();
                 // defensive sanity check
                 if (protobufPayload == null) {
-                    throw new IllegalStateException("Protobuf payload should not be null for trade " + proto.getTradeId());
+                    throw new IllegalStateException(
+                            "Protobuf payload should not be null for trade " + proto.getTradeId());
                 }
                 java.util.UUID portfolioId = java.util.UUID.fromString(proto.getPortfolioId());
                 java.util.UUID tradeId = java.util.UUID.fromString(proto.getTradeId());
                 OutboxEvent oe = new OutboxEvent(portfolioId, tradeId, protobufPayload);
                 return oe;
             }).collect(Collectors.toList());
-
-            // Batch insert both tables in single transaction
-            // Debug: log outbox payload sizes/types to help diagnose DB mapping issues
-            for (int i = 0; i < outboxEvents.size(); i++) {
-                OutboxEvent oe = outboxEvents.get(i);
-                if (oe.getPayload() == null) {
-                    log.warn("Outbox event payload null for tradeId={}", oe.getTradeId());
-                } else {
-                    // use INFO level temporarily to ensure visibility during debugging
-                    log.info("Outbox payload debug: tradeId={}, length={}, class={}, firstByte={}",
-                            oe.getTradeId(), oe.getPayload().length, oe.getPayload().getClass().getName(),
-                            (oe.getPayload().length > 0 ? oe.getPayload()[0] : -1));
-                }
-            }
 
             safeStoreRepository.saveAll(safeTrades);
             outboxRepository.saveAll(outboxEvents);
@@ -259,6 +287,33 @@ public class BatchingIngestService {
         } catch (Exception e) {
             log.error("Failed to persist batch to database", e);
             return false; // Return failure so offset does NOT get committed
+        }
+    }
+
+    /**
+     * Save a batch of failed messages to the Dead Letter Queue.
+     *
+     * @param messages    The failed messages
+     * @param errorDetail Error description
+     */
+    private void saveBatchToDlq(List<PendingStreamMessage> messages, String errorDetail) {
+        try {
+            List<DlqEntry> dlqEntries = messages.stream().map(msg -> {
+                try {
+                    String rawMessage = msg.getTrade().toString(); // Protobuf toString
+                    return new DlqEntry(rawMessage, errorDetail);
+                } catch (Exception e) {
+                    log.warn("Failed to serialize message for DLQ", e);
+                    return new DlqEntry("Serialization failed", errorDetail + ": " + e.getMessage());
+                }
+            }).collect(Collectors.toList());
+
+            dlqRepository.saveAll(dlqEntries);
+            log.debug("Saved {} messages to DLQ: {}", dlqEntries.size(), errorDetail);
+        } catch (Exception e) {
+            log.error("Failed to save batch to DLQ", e);
+            // Log the messages as last resort
+            messages.forEach(msg -> log.error("LOST MESSAGE (DLQ save failed): {}", msg.getTrade()));
         }
     }
 
