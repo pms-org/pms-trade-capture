@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.Duration;
 
 
 @Configuration
@@ -48,7 +49,7 @@ public class RabbitStreamConfig {
             environment.streamCreator()
                     .stream(streamName)
                     // Optional: Configure retention (e.g., 24 hours or 10GB)
-                    .maxAge(java.time.Duration.ofHours(24))
+                    .maxAge(Duration.ofHours(24))
                     .create();
             log.info("Stream '{}' created successfully.", streamName);
             return "created";
