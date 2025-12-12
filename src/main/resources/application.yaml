@@ -8,52 +8,75 @@ spring:
   # Database & JPA
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:pmsdb}
-    username: {DATASOURCE_USER:pms}
-    password: {DATASOURCE_PASS:pms}
+    # FIX: Added '$' prefix to variable references
+    username: ${DATASOURCE_USER:pms}
+    password: ${DATASOURCE_PASS:pms}
     hikari:
-      maximum-pool-size: {DATASOURCE_HIKARI_POOL_SIZE:20} # Important for parallel polling
+      maximum-pool-size: ${DATASOURCE_HIKARI_POOL_SIZE:20}
       keepalive-time: 30000
+  
   jpa:
-    open-in-view: {JPA_OPEN_IN_VIEW:false}
+    open-in-view: ${JPA_OPEN_IN_VIEW:false}
     properties:
       hibernate:
+        ddl-auto: validate
         jdbc:
-          batch_size: {JDBC_BATCH_SIZE:50} # Critical for Ingestion Performance
-        order_inserts: {ORDER_INSERTS:true}
-        order_updates: {ORDER_UPDATES:true}
-
+          batch_size: ${JDBC_BATCH_SIZE:500} # Increased to 500 for better batching
+        order_inserts: ${ORDER_INSERTS:true}
+        order_updates: ${ORDER_UPDATES:true}
+        
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+  
   # Kafka (Producer)
   kafka:
-    bootstrap-servers: {KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: io.confluent.kafka.serializers.protobuf.KafkaProtobufSerializer
       acks: all
-      properties:
-        schema.registry.url: {SCHEMA_REGISTRY_URL:http://localhost:8081 }
+    properties:
+      schema.registry.url: ${SCHEMA_REGISTRY_URL:http://localhost:8081}
 
+
+logging:
+  level:
+    root: INFO
+    # Enable detailed logs for your application code
+    com.pms.trade_capture: DEBUG 
+    # Show SQL queries (optional, good for debugging batch inserts)
+    org.hibernate.SQL: INFO
+    # Show basic Kafka/RabbitMQ activity without flooding
+    org.springframework.kafka: INFO
+    org.springframework.amqp: INFO
+    
 # App Specific Configs
 app:
   rabbit:
     stream:
-      name: {RABBIT_STREAM_NAME:trade-events-stream}
-      host: {RABBIT_STREAM_HOST:localhost}
-      port: {RABBIT_STREAM_PORT:5552}
-      consumer-name: {RABBIT_STREAM_PORT:trade-capture-group}
-      username: {RABBIT_STREAM_USERNAME:guest}
-      password: {RABBIT_STREAM_PASSWORD:guest}
+      name: ${RABBIT_STREAM_NAME:trade-stream}
+      host: ${RABBIT_STREAM_HOST:localhost}
+      port: ${RABBIT_STREAM_PORT:5552}
+      # Fixed likely copy-paste error in variable name (was RABBIT_STREAM_PORT)
+      consumer-name: ${RABBIT_CONSUMER_NAME:trade-capture-group}
+      username: ${RABBIT_STREAM_USERNAME:guest}
+      password: ${RABBIT_STREAM_PASSWORD:guest}
 
   ingest:
     batch:
-      max-size: {INGEST_BATCH_MAX_SIZE:500}
-      flush-interval-ms: {INGEST_BATCH_FLUSH_INTERVAL:100}
+      # Max size of the in-memory buffer before forced flush
+      max-size: ${INGEST_BATCH_MAX_SIZE:500}
+      # Max time to wait before flushing buffer
+      flush-interval-ms: ${INGEST_BATCH_FLUSH_INTERVAL:100}
 
   outbox:
-    trade-topic: {OUTBOX_TRADE_TOPIC:raw-trades-proto}
-    poll-interval-ms: {OUTBOX_POLL_INTERVAL:100}
-    batch-size: {OUTBOX_BATCH_SIZE:200}
-    concurrency: {OUTBOX_CONCURRENCY:4}
-    target-latency-ms: 200
-    min-batch: 10
-    max-batch: 2000
-
+    trade-topic: ${OUTBOX_TRADE_TOPIC:raw-trades-proto}
+    # Dynamic Batching Settings (AdaptiveBatchSizer)
+    target-latency-ms: ${OUTBOX_TARGET_LATENCY:200}
+    min-batch: ${OUTBOX_MIN_BATCH:10}
+    max-batch: ${OUTBOX_MAX_BATCH:2000}
+    # Polling interval (set to -1 if using continuous loop, or positive for fixed delay)
+    poll-interval-ms: ${OUTBOX_POLL_INTERVAL:100}
+    # Initial batch size
+    batch-size: ${OUTBOX_BATCH_SIZE:200}
+    concurrency: ${OUTBOX_CONCURRENCY:4}

@@ -69,7 +69,7 @@ public class OutboxDispatcher implements SmartLifecycle {
     /**
      * Single-Threaded Loop to ensure Strict Ordering.
      */
-    private void dispatchLoop() throws InterruptedException {
+    private void dispatchLoop() {
         while(running){
             try {
                 long startTime = System.currentTimeMillis();
@@ -93,6 +93,11 @@ public class OutboxDispatcher implements SmartLifecycle {
                 // 3. Feedback
                 long duration = System.currentTimeMillis() - startTime;
                 batchSizer.adjust(duration, batch.size());
+            } catch (InterruptedException ie) {
+                // FIX: Specific catch for InterruptedException to handle shutdown gracefully
+                log.info("Outbox Dispatcher interrupted, stopping loop.");
+                Thread.currentThread().interrupt();
+                running = false;
             } catch (Exception e) {
                 log.error("Error in dispatch loop", e);
                 batchSizer.reset(); // Back off on error

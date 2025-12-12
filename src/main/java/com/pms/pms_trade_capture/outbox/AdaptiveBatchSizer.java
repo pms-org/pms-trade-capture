@@ -27,7 +27,6 @@ public class AdaptiveBatchSizer {
      * * @param timeTakenMs Total time taken to process the batch (DB Fetch + Kafka Send + DB Update)
      * @param recordsProcessed Number of records in that batch
      */
-
     public void adjust(Long timeTakenMs, int recordsProcessed){
         int current = currentBatchSize.get();
         int next = current;

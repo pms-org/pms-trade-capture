@@ -1,16 +1,17 @@
 package com.pms.pms_trade_capture.outbox;
 
-import com.google.protobuf.InvalidProtocolBufferException;
-import com.pms.pms_trade_capture.domain.OutboxEvent;
-import com.pms.pms_trade_capture.repository.OutboxRepository;
-import com.pms.trade_capture.proto.TradeEventProto;
+import java.util.concurrent.ExecutionException;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.ExecutionException;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.pms.pms_trade_capture.domain.OutboxEvent;
+import com.pms.pms_trade_capture.repository.OutboxRepository;
+import com.pms.trade_capture.proto.TradeEventProto;
 
 @Component
 public class OutboxEventProcessor {
@@ -19,7 +20,7 @@ public class OutboxEventProcessor {
     private final OutboxRepository repository;
     private final KafkaTemplate<String, TradeEventProto> kafkaTemplate;
 
-    @Value("${app.kafka.trade-topic}")
+   @Value("${app.outbox.trade-topic}")
     private String tradeTopic;
 
     public OutboxEventProcessor(OutboxRepository repository, KafkaTemplate<String, TradeEventProto> kafkaTemplate) {

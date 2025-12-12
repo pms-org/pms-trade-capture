@@ -110,12 +110,25 @@ public class BatchingIngestService implements SmartLifecycle {
         }
     }
 
+    /**
+     * Optimized Flush:
+     * 1. Acquire Lock -> Swap List -> Release Lock (Fast)
+     * 2. Persist to DB -> Commit Offset (Slow, but Non-Blocking)
+     */
     private void flushBatch(String trigger) {
-        if (currentBatch.isEmpty()) return;
+        List<PendingStreamMessage> batchToProcess;
 
-        List<PendingStreamMessage> batchToProcess = new ArrayList<>(currentBatch);
-        currentBatch.clear();
+        // Critical Section: Fast Reference Swap
+        synchronized (batchLock) {
+            if (currentBatch.isEmpty()) return;
 
+            // Snapshot the buffer
+            batchToProcess = new ArrayList<>(currentBatch);
+            // Clear the main buffer so Consumer can keep adding to it immediately
+            currentBatch.clear();
+        }
+
+        // Long-running DB operation happens HERE (Concurrent with new messages arriving)
         processBatch(batchToProcess, trigger);
     }
 

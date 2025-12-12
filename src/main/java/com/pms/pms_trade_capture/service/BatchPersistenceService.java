@@ -1,5 +1,14 @@
 package com.pms.pms_trade_capture.service;
 
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Component;
+
 import com.pms.pms_trade_capture.domain.DlqEntry;
 import com.pms.pms_trade_capture.domain.OutboxEvent;
 import com.pms.pms_trade_capture.domain.PendingStreamMessage;
@@ -9,16 +18,11 @@ import com.pms.pms_trade_capture.repository.DlqRepository;
 import com.pms.pms_trade_capture.repository.OutboxRepository;
 import com.pms.pms_trade_capture.repository.SafeStoreRepository;
 import com.pms.pms_trade_capture.utils.AppMetrics;
-import jakarta.transaction.Transactional;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import com.pms.trade_capture.proto.TradeEventProto;
-import org.springframework.dao.DataIntegrityViolationException;
 
-import java.util.List;
-import java.util.UUID;
-import java.util.stream.Collectors;
+import jakarta.transaction.Transactional;
 
+@Component
 public class BatchPersistenceService {
     private static final Logger log = LoggerFactory.getLogger(BatchPersistenceService.class);
 
