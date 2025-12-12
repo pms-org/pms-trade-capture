@@ -1,6 +1,7 @@
 package com.pms.pms_trade_capture.config;
 
 import com.rabbitmq.stream.Environment;
+import lombok.Getter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,6 +12,7 @@ import java.time.Duration;
 
 
 @Configuration
+@Getter
 public class RabbitStreamConfig {
     public static final Logger log = LoggerFactory.getLogger(RabbitStreamConfig.class);
 
@@ -28,6 +30,9 @@ public class RabbitStreamConfig {
 
     @Value("${app.rabbit.stream.name:trade-events-stream}")
     private String streamName;
+
+    @Value("${app.rabbit.stream.consumer-name}")
+    private String consumerName;
 
     @Bean(destroyMethod = "close")
     public Environment rabbitStreamEnvironment() {
@@ -59,8 +64,4 @@ public class RabbitStreamConfig {
             return "existing";
         }
     }
-
-
-
-
 }

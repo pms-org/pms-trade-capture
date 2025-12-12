@@ -1,0 +1,96 @@
+package com.pms.pms_trade_capture.stream;
+
+import com.pms.pms_trade_capture.config.RabbitStreamConfig;
+import com.pms.pms_trade_capture.service.BatchingIngestService;
+import com.rabbitmq.stream.Consumer;
+import com.rabbitmq.stream.Environment;
+import com.rabbitmq.stream.OffsetSpecification;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.SmartLifecycle;
+import org.springframework.stereotype.Component;
+
+@Component
+public class StreamConsumerManager implements SmartLifecycle {
+    private static final Logger log = LoggerFactory.getLogger(StreamConsumerManager.class);
+
+    private final Environment environment;
+    private final RabbitStreamConfig rabbitConfig;
+    private final TradeStreamHandler tradeStreamHandler;
+    private final BatchingIngestService batchingIngestService;
+
+    private volatile boolean running = false;
+
+    private volatile Consumer consumer;
+
+    public StreamConsumerManager(Environment environment,
+                                 RabbitStreamConfig rabbitConfig,
+                                 TradeStreamHandler tradeStreamHandler,
+                                 BatchingIngestService batchingIngestService) {
+        this.environment = environment;
+        this.rabbitConfig = rabbitConfig;
+        this.tradeStreamHandler = tradeStreamHandler;
+        this.batchingIngestService = batchingIngestService;
+    }
+
+    @Override
+    public void start() {
+        log.info("Starting RabbitMQ stream Consumer: {}", rabbitConfig.getStreamName());
+        try {
+            this.consumer = environment.consumerBuilder()
+                    .stream(rabbitConfig.getStreamName())
+                    .name(rabbitConfig.getConsumerName())
+                    .offset(OffsetSpecification.first())
+                    .messageHandler(tradeStreamHandler)
+                    .autoTrackingStrategy()
+                    .builder().build();
+
+            batchingIngestService.setStreamConsumer(consumer);
+
+            this.running = true;
+
+            log.info("Consumer Started Successfully. Listening for trades...");
+
+        } catch (Exception e) {
+            // In SmartLifecycle, an exception here will stop the app startup,
+            // which is correct behavior (we can't run without the stream).
+            log.error("Failed to start RabbitMQ Stream Consumer", e);
+            throw new RuntimeException("Stream start failed", e);
+        }
+    }
+
+    @Override
+    public void stop() {
+        log.info("Stopping RabbitMQ Stream Consumer...");
+        if (consumer != null) {
+            consumer.close();
+        }
+        this.running = false;
+        log.info("Consumer stopped.");
+    }
+
+    @Override
+    public boolean isRunning() {
+        return this.running;
+    }
+
+    /**
+     * Auto-start ensures this bean's start() is called automatically
+     * when the context refreshes.
+     */
+    @Override
+    public boolean isAutoStartup() {
+        return SmartLifecycle.super.isAutoStartup();
+    }
+
+
+    /**
+     * Phase: Lower numbers start first and stop last.
+     * We want this to start LATE (after DB) and stop EARLY (before DB).
+     * Integer.MAX_VALUE means "Start last, Stop first".
+     */
+    @Override
+    public int getPhase() {
+        return Integer.MAX_VALUE;
+    }
+}

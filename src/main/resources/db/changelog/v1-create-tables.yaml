@@ -1,0 +1,143 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-init-schema
+      author: pms-team
+      changes:
+        # 1. Sequences for High-Performance ID Generation
+        - createSequence:
+            sequenceName: safe_store_trade_seq
+            incrementBy: 50
+        - createSequence:
+            sequenceName: outbox_event_seq
+            incrementBy: 50
+        - createSequence:
+            sequenceName: dlq_entry_seq
+            incrementBy: 1
+
+        # 2. Safe Store (Audit Log)
+        - createTable:
+            tableName: safe_store_trade
+            columns:
+              - column:
+                  name: id
+                  type: bigint
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: received_at
+                  type: timestamp
+                  defaultValueComputed: "now()"
+                  constraints:
+                    nullable: false
+              - column:
+                  name: portfolio_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: trade_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+                    unique: true  # Idempotency Guard
+              - column:
+                  name: symbol
+                  type: varchar(20)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: side
+                  type: varchar(10)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: price_per_stock
+                  type: double precision
+                  constraints:
+                    nullable: false
+              - column:
+                  name: quantity
+                  type: bigint
+                  constraints:
+                    nullable: false
+              - column:
+                  name: event_timestamp
+                  type: timestamp
+                  constraints:
+                    nullable: false
+
+        # 3. Outbox Table
+        - createTable:
+            tableName: outbox_event
+            columns:
+              - column:
+                  name: id
+                  type: bigint
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: timestamp
+                  defaultValueComputed: "now()"
+                  constraints:
+                    nullable: false
+              - column:
+                  name: portfolio_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: trade_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: payload
+                  type: bytea  # Raw Protobuf Bytes
+                  constraints:
+                    nullable: false
+              - column:
+                  name: status
+                  type: varchar(20)
+                  defaultValue: "PENDING"
+                  constraints:
+                    nullable: false
+              - column:
+                  name: attempts
+                  type: int
+                  defaultValue: 0
+
+        # 4. Dead Letter Queue
+        - createTable:
+            tableName: dlq_entry
+            columns:
+              - column:
+                  name: id
+                  type: bigint
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: failed_at
+                  type: timestamp
+                  defaultValueComputed: "now()"
+              - column:
+                  name: raw_message
+                  type: bytea
+              - column:
+                  name: error_detail
+                  type: text
+
+        # 5. Critical Performance Index for Poller
+        - createIndex:
+            tableName: outbox_event
+            indexName: idx_outbox_polling
+            columns:
+              - column:
+                  name: created_at
+                  type: timestamp
+            # Partial index is smaller and faster
+            # Liquibase 'where' support depends on DB, valid for Postgres
+            where: "status = 'PENDING'"

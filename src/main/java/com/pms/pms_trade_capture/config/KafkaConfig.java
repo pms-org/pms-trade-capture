@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
-import com.pms.pms_trade_capture.proto.TradeEventProto;
+import com.pms.trade_capture.proto.TradeEventProto;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -35,7 +35,7 @@ public class KafkaConfig {
 
         config.put(ProducerConfig.ACKS_CONFIG, "all");
         config.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-        config.put((ProducerConfig.RETRIES_CONFIG, Integer.MAX_VALUE);
+        config.put(ProducerConfig.RETRIES_CONFIG, Integer.MAX_VALUE);
         config.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 5);
 
         // Throughput Tuning (Batching)
@@ -45,11 +45,9 @@ public class KafkaConfig {
 
         return new DefaultKafkaProducerFactory<>(config);
 
-        @Bean
-        public KafkaTemplate<String, TradeEventProto> kafkaTemplate() {
-            return new KafkaTemplate<>(producerFactory());
-        }
-
-
+    }
+    @Bean
+    public KafkaTemplate<String, TradeEventProto> kafkaTemplate() {
+        return new KafkaTemplate<>(producerFactory());
     }
 }
