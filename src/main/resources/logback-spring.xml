@@ -3,7 +3,7 @@
     <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
     
     <!-- Property for log directory -->
-    <property name="LOG_DIR" value="logs"/>
+    <property name="LOG_DIR" value="/tmp/logs"/>
     <property name="LOG_FILE_NAME" value="pms-trade-capture"/>
     
     <!-- 

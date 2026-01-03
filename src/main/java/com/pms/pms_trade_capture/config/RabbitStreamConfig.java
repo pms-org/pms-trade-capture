@@ -1,15 +1,17 @@
 package com.pms.pms_trade_capture.config;
 
-import com.rabbitmq.stream.Environment;
-import lombok.Getter;
+import java.time.Duration;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import java.time.Duration;
+import com.rabbitmq.stream.Address;
+import com.rabbitmq.stream.Environment;
 
+import lombok.Getter;
 
 @Configuration
 @Getter
@@ -44,6 +46,7 @@ public class RabbitStreamConfig {
                 .username(username)
                 .password(password)
                 .maxConsumersByConnection(1)
+                .addressResolver(address -> new Address(host, port))
                 .build();
     }
 
