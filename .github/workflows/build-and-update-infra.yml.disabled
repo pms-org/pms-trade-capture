@@ -2,7 +2,7 @@ name: Build image and update pms-infra
 
 on:
   push:
-    branches: [master]
+    branches: [ master ]
   workflow_dispatch: {}
 
 permissions:
@@ -73,7 +73,7 @@ jobs:
             echo "Error: Failed to clone infra repository"
             exit 1
           fi
-
+          
           if [ ! -d "infra" ]; then
             echo "Error: Infra directory not created after clone"
             exit 1
@@ -95,31 +95,31 @@ jobs:
           IMAGE_REPO: ${{ secrets.IMAGE_REPO }}
         run: |
           cd infra
-
+          
           # Check if the expected directory structure exists
           if [ ! -d "services/trade-capture" ]; then
             echo "Error: services/trade-capture directory not found in infra repo"
             exit 1
           fi
-
+          
           cd services/trade-capture
-
+          
           # Check if kustomization.yaml exists
           if [ ! -f "kustomization.yaml" ]; then
             echo "Error: kustomization.yaml not found in services/trade-capture"
             exit 1
           fi
-
+          
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
           git checkout -b bump/trade-capture/${IMAGE_TAG}
-
+          
           # Update the image tag in kustomization.yaml (CI contract)
           if ! yq e '.images[0].newTag = strenv(IMAGE_TAG)' -i kustomization.yaml; then
             echo "Error: Failed to update kustomization.yaml with yq"
             exit 1
           fi
-
+          
           git add kustomization.yaml
           git commit -m "ci(trade-capture): bump image to ${IMAGE_REPO}:${IMAGE_TAG}"
           git push origin HEAD
@@ -131,7 +131,7 @@ jobs:
         run: |
           cd infra
           BRANCH=$(git rev-parse --abbrev-ref HEAD)
-
+          
           # Determine the default branch (main or master)
           DEFAULT_BRANCH=$(git remote show origin | grep "HEAD branch" | cut -d: -f2 | xargs)
           if [ -z "$DEFAULT_BRANCH" ]; then
@@ -145,13 +145,13 @@ jobs:
               exit 1
             fi
           fi
-
+          
           echo "Creating PR against branch: $DEFAULT_BRANCH"
-
+          
           # Check if PR already exists
           EXISTING_PR=$(curl -s -H "Authorization: token ${INFRA_TOKEN}" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/pms-org/pms-infra/pulls?head=pms-org:${BRANCH}&base=${DEFAULT_BRANCH}" | jq -r '.[0].number')
-
+          
           if [ "$EXISTING_PR" != "null" ] && [ -n "$EXISTING_PR" ]; then
             echo "PR already exists: #$EXISTING_PR"
           else
