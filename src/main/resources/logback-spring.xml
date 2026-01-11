@@ -3,7 +3,7 @@
     <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
     
     <!-- Property for log directory -->
-    <property name="LOG_DIR" value="/tmp/logs"/>
+    <property name="LOG_DIR" value="logs"/>
     <property name="LOG_FILE_NAME" value="pms-trade-capture"/>
     
     <!-- 
@@ -99,7 +99,7 @@
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${LOG_DIR}/archive/${LOG_FILE_NAME}-ingestion-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
             <maxFileSize>100MB</maxFileSize>
-            <maxHistory>14</maxHistory>
+            <maxHistory>1</maxHistory>
             <totalSizeCap>3GB</totalSizeCap>
             <cleanHistoryOnStart>true</cleanHistoryOnStart>
         </rollingPolicy>
