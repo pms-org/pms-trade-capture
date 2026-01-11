@@ -29,11 +29,22 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Set image name
+        id: set_image
+        run: |
+          # Allow explicit override of image repo via secret DOCKERHUB_REPO (e.g. "myuser/pms-trade-capture").
+          # If not provided, fall back to the GitHub repo (owner/repo).
+          if [ -n "${{ secrets.DOCKERHUB_REPO }}" ]; then
+            echo "IMAGE=${{ secrets.DOCKERHUB_REPO }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "IMAGE=${{ github.repository }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ steps.set_image.outputs.IMAGE }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
