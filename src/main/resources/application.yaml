@@ -13,7 +13,7 @@ spring:
     hikari:
       maximum-pool-size: ${DATASOURCE_HIKARI_POOL_SIZE:20}
       keepalive-time: 30000
-  
+
   jpa:
     open-in-view: ${JPA_OPEN_IN_VIEW:false}
     properties:
@@ -23,11 +23,11 @@ spring:
           batch_size: ${JDBC_BATCH_SIZE:500} # Increased to 500 for better batching
         order_inserts: ${ORDER_INSERTS:true}
         order_updates: ${ORDER_UPDATES:true}
-        
+
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.yaml
     clear-checksums: true
-  
+
   # Kafka (Producer)
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -41,18 +41,17 @@ spring:
     compose:
       enabled: false
 
-
 logging:
   level:
     root: INFO
     # Enable detailed logs for your application code
-    com.pms.pms_trade_capture: DEBUG 
+    com.pms.pms_trade_capture: DEBUG
     # Show SQL queries (optional, good for debugging batch inserts)
     org.hibernate.SQL: INFO
     # Show basic Kafka/RabbitMQ activity without flooding
     org.springframework.kafka: INFO
     org.springframework.amqp: INFO
-    
+
 # App Specific Configs
 app:
   rabbit:
@@ -90,8 +89,8 @@ resilience4j:
     instances:
       pmsDb:
         registerHealthIndicator: true
-        slidingWindowSize: 10        # Check last 10 calls
-        failureRateThreshold: 50     # If 5/10 fail, OPEN the circuit
+        slidingWindowSize: 10 # Check last 10 calls
+        failureRateThreshold: 50 # If 5/10 fail, OPEN the circuit
         waitDurationInOpenState: 10s # Wait 10s before trying again (Half-Open)
         permittedNumberOfCallsInHalfOpenState: 3
         automaticTransitionFromOpenToHalfOpenEnabled: true

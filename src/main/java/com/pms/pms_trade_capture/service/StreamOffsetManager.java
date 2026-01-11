@@ -1,11 +1,12 @@
 package com.pms.pms_trade_capture.service;
 
-import com.rabbitmq.stream.Consumer;
+import java.util.concurrent.atomic.AtomicReference;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.atomic.AtomicReference;
+import com.rabbitmq.stream.Consumer;
 
 @Component
 public class StreamOffsetManager {

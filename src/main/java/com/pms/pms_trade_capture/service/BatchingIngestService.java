@@ -121,7 +121,7 @@ public class BatchingIngestService implements SmartLifecycle {
         }
 
         log.warn("⚠️ Buffer full! Pausing consumer and BLOCKING. Offset: {}", message.getOffset());
-        consumerManager.pause();
+        consumerManager.pause(); //! Backpressure: Pause consumer until we clear space
 
         try {
             messageBuffer.put(message); // Blocks here until flushBatch clears space
