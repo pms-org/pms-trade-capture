@@ -22,13 +22,8 @@ import com.pms.pms_trade_capture.domain.OutboxEvent;
 import com.pms.trade_capture.proto.TradeEventProto;
 
 /**
- * PRODUCTION-GRADE Outbox Event Processor with strict failure classification.
- * 
- * KEY GUARANTEES:
- * 1. Processes events in strict order (no overtaking)
- * 2. Stops immediately on system failures (Kafka down, network errors)
- * 3. Skips poison pills and routes to DLQ (serialization errors, invalid data)
- * 4. Returns only the continuous successful prefix for bulk DB update
+ * Processes outbox events by sending them to Kafka with proper failure classification.
+ * Distinguishes between poison pills (permanent failures) and system failures (transient).
  */
 @Component
 public class OutboxEventProcessor {
@@ -47,16 +42,11 @@ public class OutboxEventProcessor {
     }
 
     /**
-     * CRITICAL: Processes batch with prefix-safe semantics.
-     * 
-     * Behavior:
-     * - Send trades one-by-one in order (blocking)
-     * - On POISON PILL: skip it, record for DLQ, continue batch
-     * - On SYSTEM FAILURE: STOP immediately, return successful prefix
-     * - Collect successful IDs for bulk DB update
-     * 
-     * @param events Ordered list of events to process
-     * @return BatchProcessingResult containing successful prefix and any failures
+     * Processes a batch of events, sending each to Kafka and classifying failures.
+     * Stops on system failures but continues past poison pills, returning only the successful prefix.
+     *
+     * @param events the ordered list of events to process
+     * @return result containing successful event IDs and any failures encountered
      */
     public BatchProcessingResult processBatch(List<OutboxEvent> events) {
         List<Long> successfulIds = new ArrayList<>();
@@ -86,12 +76,10 @@ public class OutboxEventProcessor {
     }
 
     /**
-     * Sends a single event to Kafka with timeout and failure classification.
-     * 
-     * @throws PoisonPillException    if the failure is permanent (bad data,
-     *                                serialization error)
-     * @throws SystemFailureException if the failure is transient (Kafka down,
-     *                                timeout)
+     * Sends a single event to Kafka with timeout handling and failure classification.
+     *
+     * @throws PoisonPillException if the event data is permanently corrupted
+     * @throws SystemFailureException if Kafka is unavailable or network issues occur
      */
     private void sendToKafka(OutboxEvent event) throws PoisonPillException, SystemFailureException {
         try {

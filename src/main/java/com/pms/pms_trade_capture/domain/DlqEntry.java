@@ -20,9 +20,6 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 public class DlqEntry {
-    // Note: allocationSize = 50 matches hibernate.jdbc.batch_size.
-    // This is critical for batch inserts to work efficiently without fetching a
-    // sequence value for every single row.
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "dlq_seq")
     @SequenceGenerator(name = "dlq_seq", sequenceName = "dlq_entry_seq", allocationSize = 1)
@@ -31,7 +28,6 @@ public class DlqEntry {
     @Column(name = "failed_at", nullable = false)
     private LocalDateTime failedAt = LocalDateTime.now();
 
-    // FIX: Add this annotation to force strict binary storage
     @Column(name = "raw_message", nullable = false)
     @JdbcTypeCode(SqlTypes.VARBINARY)
     private byte[] rawMessage;

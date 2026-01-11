@@ -56,13 +56,12 @@ public class RabbitStreamConfig {
             log.info("Attempting to declare stream: {}", streamName);
             environment.streamCreator()
                     .stream(streamName)
-                    // Optional: Configure retention (e.g., 24 hours or 10GB)
                     .maxAge(Duration.ofHours(24))
                     .create();
             log.info("Stream '{}' created successfully.", streamName);
             return "created";
         } catch (Exception e) {
-            // Usually means it already exists, which is fine
+            // Stream may already exist, which is fine
             log.info("Stream '{}' already exists or could not be created: {}", streamName, e.getMessage());
             return "existing";
         }

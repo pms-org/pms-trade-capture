@@ -45,16 +45,10 @@ public class BatchPersistenceService {
     }
 
     /**
-     * Atomically persists a batch of trades to SafeStore and Outbox.
-     * 
-     * Behavior:
-     * - Valid messages: Saved to SafeStore + Outbox (will be published to Kafka)
-     * - Invalid messages: Saved to SafeStore (marked invalid) + DLQ, NO Outbox entry
-     * 
-     * Exceptions:
-     * - CallNotPermittedException: Circuit breaker open (DB unavailable) - caller should retry
-     * - DataIntegrityViolationException: Duplicate trade_id (idempotent - safe to ignore)
-     * - Other exceptions: Transient DB errors - caller should retry
+     * Persists a batch of trades to SafeStore and creates outbox events for valid trades.
+     * Invalid trades are stored in SafeStore (marked invalid) and sent to DLQ without outbox events.
+     *
+     * @throws CallNotPermittedException if circuit breaker is open (DB unavailable)
      */
     @Transactional
     @CircuitBreaker(name = CB_NAME)
@@ -87,16 +81,15 @@ public class BatchPersistenceService {
             metrics.incrementIngestSuccess(1);
             return true;
         } catch (Exception e) {
-            // Note: If CircuitBreaker is OPEN, this method won't even run.
-            // It will throw CallNotPermittedException immediately.
-            // Check if it's a "Bad Data" error (not a DB connection error)
+            // If circuit breaker is open, this method won't execute
+            // Check if it's a data integrity issue vs connection problem
             if (e instanceof org.springframework.dao.DataIntegrityViolationException
                     || e instanceof IllegalArgumentException) {
-                log.warn("Data Integrity Error for seq {}. Moving to DLQ.", msg.getOffset());
+                log.warn("Data integrity error for seq {}. Moving to DLQ.", msg.getOffset());
                 saveToDlq(msg, "Data Error: " + e.getMessage());
                 return false;
             }
-            throw e; // Rethrow connection errors to trip the breaker
+            throw e; // Rethrow connection errors to trip circuit breaker
         }
     }
 

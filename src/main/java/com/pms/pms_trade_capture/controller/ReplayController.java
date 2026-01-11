@@ -24,15 +24,13 @@ public class ReplayController {
     @PostMapping("/hex")
     public ResponseEntity<String> replayHexTrade(@RequestBody String hexData) {
         try {
-            // 1. Convert Hex -> Bytes
+            // Convert hex string to bytes
             byte[] rawBytes = HexFormat.of().parseHex(hexData);
 
-            // 2. Wrap in a message (Use dummy offset -1, logic handles it)
-            // We pass 'null' context because we don't need to ack RabbitMQ for this manual
-            // replay
+            // Create message for replay (dummy offset, no RabbitMQ context needed)
             PendingStreamMessage msg = new PendingStreamMessage(null, rawBytes, -1, null);
 
-            // 3. Inject directly into the Buffer
+            // Inject into processing buffer
             ingestService.addMessage(msg);
 
             return ResponseEntity.ok("Replay injected into buffer.");

@@ -38,8 +38,7 @@ public class OutboxEvent {
     private int attempts = 0;
 
     /**
-     * Manual Constructor to ensure safe byte[] handling.
-     * Do not remove or replace with Lombok.
+     * Constructor for creating new outbox events with proper initialization.
      */
     public OutboxEvent(UUID portfolioId, UUID tradeId, byte[] payload) {
         this.portfolioId = portfolioId;

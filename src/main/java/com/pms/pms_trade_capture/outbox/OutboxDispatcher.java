@@ -21,42 +21,8 @@ import com.pms.pms_trade_capture.repository.OutboxRepository;
 import lombok.SneakyThrows;
 
 /**
- * PRODUCTION-GRADE Outbox Dispatcher with PostgreSQL Advisory Locks for strict
- * ordering.
- * 
- * CRITICAL ARCHITECTURAL DECISION:
- * We lock PORTFOLIOS (logical aggregates), not individual rows.
- * 
- * WHY ADVISORY LOCKS?
- * 1. Row locks (FOR UPDATE SKIP LOCKED) allow "leapfrogging":
- * - Pod A locks trade #100 (portfolio P1)
- * - Pod B sees #100 locked, SKIPS it, locks trade #101 (same portfolio P1)
- * - Pod B sends #101 to Kafka BEFORE Pod A sends #100
- * - RESULT: Trades arrive out of order (SILENT CORRECTNESS FAILURE)
- * 
- * 2. Advisory locks prevent this:
- * - pg_try_advisory_xact_lock(hash(portfolio_id)) locks the PORTFOLIO concept
- * - If Pod A owns portfolio P1, Pod B gets ZERO P1 rows (filtered at query
- * level)
- * - One portfolio → one pod → one Kafka producer → guaranteed ordering
- * 
- * CRITICAL INVARIANTS:
- * 1. PORTFOLIO ISOLATION: Only one pod processes a portfolio at a time
- * 2. STRICT ORDERING: Within a portfolio, trades processed in chronological
- * order
- * 3. PREFIX-SAFE: Only marks successful prefix as SENT (never skips failed
- * events)
- * 4. POISON PILL HANDLING: Routes bad data to DLQ without blocking healthy
- * trades
- * 5. SYSTEM FAILURE HANDLING: Backs off on Kafka downtime (exponential backoff)
- * 6. CRASH SAFETY: Transactional boundaries ensure at-least-once delivery
- * 7. DEADLOCK-FREE: Single advisory lock per transaction (no multi-lock
- * scenarios)
- * 
- * ORDERING GUARANTEE:
- * "Can Trade #101 for the same portfolio ever reach Kafka before Trade #100?"
- * ANSWER: NO. Mathematically impossible. Advisory lock ensures exclusive
- * portfolio ownership.
+ * Outbox dispatcher that ensures strict ordering of events per portfolio using PostgreSQL advisory locks.
+ * Processes events in portfolio-isolated batches to guarantee chronological order and prevent message reordering.
  */
 @Component
 public class OutboxDispatcher implements SmartLifecycle {
@@ -126,26 +92,8 @@ public class OutboxDispatcher implements SmartLifecycle {
     }
 
     /**
-     * CRITICAL: Portfolio-isolated dispatch loop using advisory locks.
-     * 
-     * SIMPLIFIED ALGORITHM (vs. old two-query approach):
-     * 1. Query: findPendingBatch(limit)
-     * - PostgreSQL evaluates pg_try_advisory_xact_lock() for EACH row
-     * - Rows whose portfolio is already locked by another pod are FILTERED OUT
-     * - Returns up to `limit` events from portfolios THIS pod successfully locked
-     * 2. Group by portfolio (maintains ordering within each portfolio)
-     * 3. Process each portfolio's batch (prefix-safe)
-     * 4. Handle failures (poison pills → DLQ, system failures → backoff)
-     * 5. Repeat
-     * 
-     * WHY THIS IS CORRECT:
-     * - Advisory lock ensures: If Pod A owns P1, Pod B gets ZERO P1 rows
-     * - No "leapfrogging" possible (Trade #101 can't overtake Trade #100)
-     * - Multiple portfolios processed in parallel (P1 on Pod A, P2 on Pod B)
-     * - Lock auto-released on commit/rollback (no cleanup needed)
-     * 
-     * ORDERING GUARANTEE:
-     * One portfolio → one pod → one Kafka producer → strict chronological order.
+     * Main dispatch loop that processes outbox events using advisory locks for portfolio isolation.
+     * Groups events by portfolio to maintain ordering and processes each portfolio's batch safely.
      */
     private void dispatchLoop() {
         while (running) {
@@ -238,8 +186,8 @@ public class OutboxDispatcher implements SmartLifecycle {
     }
 
     /**
-     * Routes poison pill to DLQ and removes from outbox.
-     * MUST be called within a transaction.
+     * Moves a poison pill event to the dead letter queue and removes it from the outbox.
+     * Must be called within a transaction.
      */
     private void moveToDlq(OutboxEvent event, String errorMsg) {
         DlqEntry dlqEntry = new DlqEntry(event.getPayload(), "Poison Pill: " + errorMsg);
@@ -248,7 +196,7 @@ public class OutboxDispatcher implements SmartLifecycle {
     }
 
     /**
-     * Helper to find event by ID in batch.
+     * Finds an event by ID within a batch of events.
      */
     private OutboxEvent findEventById(List<OutboxEvent> batch, Long eventId) {
         return batch.stream()
