@@ -6,9 +6,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import com.pms.pms_trade_capture.dto.BatchProcessingResult;
-import com.pms.pms_trade_capture.exception.PoisonPillException;
-import com.pms.pms_trade_capture.exception.SystemFailureException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.errors.SerializationException;
 import org.slf4j.Logger;
@@ -19,6 +16,9 @@ import org.springframework.stereotype.Component;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.pms.pms_trade_capture.domain.OutboxEvent;
+import com.pms.pms_trade_capture.dto.BatchProcessingResult;
+import com.pms.pms_trade_capture.exception.PoisonPillException;
+import com.pms.pms_trade_capture.exception.SystemFailureException;
 import com.pms.trade_capture.proto.TradeEventProto;
 
 /**
@@ -83,8 +83,7 @@ public class OutboxEventProcessor {
      */
     private void sendToKafka(OutboxEvent event) throws PoisonPillException, SystemFailureException {
         try {
-            // 1. Deserialize protobuf (can throw InvalidProtocolBufferException = poison
-            // pill)
+            // 1. Deserialize protobuf (can throw InvalidProtocolBufferException = poison pill)
             TradeEventProto proto = TradeEventProto.parseFrom(event.getPayload());
 
             String key = event.getPortfolioId().toString();

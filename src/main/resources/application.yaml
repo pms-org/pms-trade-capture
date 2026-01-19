@@ -7,20 +7,20 @@ spring:
 
   # Database & JPA
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:pmsdb}
-    username: ${DATASOURCE_USER:pms}
-    password: ${DATASOURCE_PASS:pms}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:pmsdb}
+    username: ${DB_USERNAME:pms}
+    password: ${DB_PASSWORD:pms}
     hikari:
-      maximum-pool-size: ${DATASOURCE_HIKARI_POOL_SIZE:20}
+      maximum-pool-size: ${TRADE_CAPTURE_POOL_SIZE:20}
       keepalive-time: 30000
 
   jpa:
     open-in-view: ${JPA_OPEN_IN_VIEW:false}
     properties:
       hibernate:
-        ddl-auto: validate
+        ddl-auto: ${DB_DDL_AUTO:update}
         jdbc:
-          batch_size: ${JDBC_BATCH_SIZE:500} # Increased to 500 for better batching
+          batch_size: ${TRADE_CAPTURE_BATCH_SIZE:500} # Increased to 500 for better batching
         order_inserts: ${ORDER_INSERTS:true}
         order_updates: ${ORDER_UPDATES:true}
 
@@ -56,13 +56,13 @@ logging:
 app:
   rabbit:
     stream:
-      name: ${RABBIT_STREAM_NAME:trade-stream}
-      host: ${RABBIT_STREAM_HOST:localhost}
-      port: ${RABBIT_STREAM_PORT:5552}
+      name: ${RABBITMQ_STREAM_NAME:trade-stream}
+      host: ${RABBITMQ_HOST:localhost}
+      port: ${RABBITMQ_STREAM_PORT:5552}
       # Fixed likely copy-paste error in variable name (was RABBIT_STREAM_PORT)
-      consumer-name: ${RABBIT_CONSUMER_NAME:trade-capture-group}
-      username: ${RABBIT_STREAM_USERNAME:guest}
-      password: ${RABBIT_STREAM_PASSWORD:guest}
+      consumer-name: ${TRADE_CAPTURE_CONSUMER_GROUP:trade-capture-group}
+      username: ${RABBITMQ_USERNAME:guest}
+      password: ${RABBITMQ_PASSWORD:guest}
 
   ingest:
     batch:
@@ -72,7 +72,7 @@ app:
       flush-interval-ms: ${INGEST_BATCH_FLUSH_INTERVAL:100}
 
   outbox:
-    trade-topic: ${OUTBOX_TRADE_TOPIC:raw-trades-topic}
+    trade-topic: ${INCOMING_TRADES_TOPIC:raw-trades-topic}
     max-retries: ${OUTBOX_MAX_RETRIES:3}
     # Dynamic Batching Settings (AdaptiveBatchSizer)
     target-latency-ms: ${OUTBOX_TARGET_LATENCY:200}
