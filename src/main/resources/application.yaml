@@ -5,6 +5,10 @@ spring:
   application:
     name: pms-trade-capture
 
+  # Allow bean definition overriding for kafkaTemplate (RTTM client vs trade-capture)
+  main:
+    allow-bean-definition-overriding: true
+
   # Database & JPA
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:pmsdb}
@@ -35,11 +39,35 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: io.confluent.kafka.serializers.protobuf.KafkaProtobufSerializer
       acks: all
+      # Max in-flight requests per connection
+      properties:
+        max.in.flight.requests.per.connection: ${KAFKA_PRODUCER_MAX_IN_FLIGHT:5}
+        linger.ms: ${KAFKA_PRODUCER_LINGER_MS:20}
+        batch.size: ${KAFKA_PRODUCER_BATCH_SIZE:65536}
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP_ID:trade-capture-consumer}
     properties:
       schema.registry.url: ${SCHEMA_REGISTRY_URL:http://localhost:8081}
   dokcer:
     compose:
       enabled: false
+
+rttm:
+  client:
+    mode: ${RTTM_MODE:kafka}
+    kafka:
+      bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+      topics:
+        trade-events: ${KAFKA_TOPIC_TRADE_EVENTS:rttm.trade.events}
+        dlq-events: ${KAFKA_TOPIC_DLQ_EVENTS:rttm.dlq.events}
+        queue-metrics: ${KAFKA_TOPIC_QUEUE_METRICS:rttm.queue.metrics}
+        error-events: ${KAFKA_TOPIC_ERROR_EVENTS:rttm.error.events}
+    send-timeout-ms: ${RTTM_SEND_TIMEOUT_MS:3000}
+    retry:
+      max-attempts: ${RTTM_RETRY_MAX_ATTEMPTS:3}
+      backoff-ms: ${RTTM_RETRY_BACKOFF_MS:100}
+    metrics:
+      interval-ms: ${RTTM_METRICS_INTERVAL_MS:30000}
 
 logging:
   level:
@@ -70,6 +98,16 @@ app:
       max-size: ${INGEST_BATCH_MAX_SIZE:500}
       # Max time to wait before flushing buffer
       flush-interval-ms: ${INGEST_BATCH_FLUSH_INTERVAL:100}
+      # Batch drain size (max messages to drain from buffer per flush)
+      drain-size: ${INGEST_BATCH_DRAIN_SIZE:500}
+      # Resume consumer threshold (resume when buffer size drops below this)
+      resume-threshold: ${INGEST_RESUME_THRESHOLD:1000}
+      # Circuit breaker retry delay (milliseconds to wait when circuit is open)
+      circuit-retry-delay-ms: ${INGEST_CIRCUIT_RETRY_DELAY:5000}
+
+  # DLQ topic names for RTTM events
+  dlq-topic-ingestion: ${RTTM_DLQ_TOPIC_INGESTION:trade-capture-ingestion-dlq}
+  dlq-topic-outbox: ${RTTM_DLQ_TOPIC_OUTBOX:trade-capture-dlq}
 
   outbox:
     trade-topic: ${INCOMING_TRADES_TOPIC:raw-trades-topic}

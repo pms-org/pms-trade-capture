@@ -14,12 +14,16 @@ import org.springframework.kafka.core.KafkaTemplate;
 
 import com.pms.pms_trade_capture.domain.OutboxEvent;
 import com.pms.pms_trade_capture.dto.BatchProcessingResult;
+import com.pms.rttm.client.clients.RttmClient;
 import com.pms.trade_capture.proto.TradeEventProto;
 
 class OutboxEventProcessorTest {
 
     @Mock
     private KafkaTemplate<String, TradeEventProto> kafkaTemplate;
+
+    @Mock
+    private RttmClient rttmClient;
 
     private java.util.concurrent.CompletableFuture<Object> future;
 
@@ -28,7 +32,7 @@ class OutboxEventProcessorTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        processor = new OutboxEventProcessor(kafkaTemplate);
+        processor = new OutboxEventProcessor(kafkaTemplate, rttmClient);
     }
 
     @Test

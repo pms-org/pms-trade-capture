@@ -20,6 +20,9 @@ import org.springframework.stereotype.Service;
 import com.pms.pms_trade_capture.domain.PendingStreamMessage;
 import com.pms.pms_trade_capture.stream.StreamConsumerManager;
 import com.rabbitmq.stream.MessageHandler;
+import com.pms.rttm.client.clients.RttmClient;
+import com.pms.rttm.client.dto.ErrorEventPayload;
+import com.pms.rttm.client.enums.EventStage;
 
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 
@@ -31,6 +34,7 @@ public class BatchingIngestService implements SmartLifecycle {
     private final StreamOffsetManager offsetManager;
     private final StreamConsumerManager consumerManager;
     private final ScheduledExecutorService scheduler;
+    private final RttmClient rttmClient;
 
     private final ReentrantLock bufferLock = new ReentrantLock();
 
@@ -41,6 +45,18 @@ public class BatchingIngestService implements SmartLifecycle {
 
     @Value("${app.ingest.batch.flush-interval-ms:100}")
     private long flushIntervalMs;
+    
+    @Value("${app.ingest.batch.drain-size:500}")
+    private int drainSize;
+    
+    @Value("${app.ingest.batch.resume-threshold:1000}")
+    private int resumeThreshold;
+    
+    @Value("${app.ingest.batch.circuit-retry-delay-ms:5000}")
+    private long circuitRetryDelayMs;
+
+    @Value("${spring.application.name}")
+    private String serviceName;
 
     // Single Ordered Buffer (Fixes Offset Gap Bug)
     // private final List<PendingStreamMessage> currentBatch = new ArrayList<>();
@@ -54,11 +70,13 @@ public class BatchingIngestService implements SmartLifecycle {
             BatchPersistenceService persistenceService,
             StreamOffsetManager offsetManager,
             @Qualifier("ingestScheduler") ScheduledExecutorService scheduler,
-            @Lazy StreamConsumerManager consumerManager) {
+            @Lazy StreamConsumerManager consumerManager,
+            RttmClient rttmClient) {
         this.consumerManager = consumerManager;
         this.persistenceService = persistenceService;
         this.offsetManager = offsetManager;
         this.scheduler = scheduler;
+        this.rttmClient = rttmClient;
     }
 
     @Override
@@ -142,7 +160,7 @@ public class BatchingIngestService implements SmartLifecycle {
         bufferLock.lock();
         List<PendingStreamMessage> batchToProcess = new ArrayList<>();
         try {
-            messageBuffer.drainTo(batchToProcess, 500);
+            messageBuffer.drainTo(batchToProcess, drainSize);
         } finally {
             bufferLock.unlock();
         }
@@ -158,15 +176,15 @@ public class BatchingIngestService implements SmartLifecycle {
                 processed = true; // Success
 
                 // Resume consumer if we cleared enough space
-                if (messageBuffer.size() < 1000)
+                if (messageBuffer.size() < resumeThreshold)
                     consumerManager.resume();
 
             } catch (CallNotPermittedException e) {
                 // CIRCUIT OPEN: DB is Dead.
-                log.error("CIRCUIT OPEN: Pausing Consumer & Waiting 5s...");
+                log.error("CIRCUIT OPEN: Pausing Consumer & Waiting {}ms...", circuitRetryDelayMs);
                 consumerManager.pause();
                 try {
-                    Thread.sleep(5000);
+                    Thread.sleep(circuitRetryDelayMs);
                 } catch (InterruptedException ex) {
                     Thread.currentThread().interrupt();
                 }
@@ -200,6 +218,7 @@ public class BatchingIngestService implements SmartLifecycle {
 
         } catch (Exception e) {
             log.warn("Batch Failed. Switching to Safe Path. Error: {}", e.getMessage());
+            sendErrorEvent("Batch persistence failed", e.getMessage(), batch);
 
             // 2. SAFE PATH (Single Item Fallback)
             PendingStreamMessage lastSuccess = null;
@@ -212,6 +231,7 @@ public class BatchingIngestService implements SmartLifecycle {
                     throw cbEx; // DB died mid-loop -> Stop & Retry
                 } catch (Exception ex) {
                     log.error("Unexpected error in safe path", ex);
+                    sendErrorEvent("Single item persistence failed", ex.getMessage(), List.of(msg));
                 }
             }
 
@@ -226,6 +246,57 @@ public class BatchingIngestService implements SmartLifecycle {
         MessageHandler.Context context = msg.getContext();
         if (context != null) {
             context.storeOffset();
+        }
+    }
+
+    /**
+     * Send error event to RTTM when ingestion fails
+     * Includes trade IDs when available for better error tracking
+     */
+    private void sendErrorEvent(String errorType, String errorMessage, List<PendingStreamMessage> messages) {
+        try {
+            // Extract trade IDs from valid messages in the batch
+            StringBuilder tradeIds = new StringBuilder();
+            int validCount = 0;
+            
+            for (PendingStreamMessage msg : messages) {
+                if (msg.isValid() && msg.getTrade() != null) {
+                    if (validCount > 0) {
+                        tradeIds.append(", ");
+                    }
+                    tradeIds.append(msg.getTrade().getTradeId());
+                    validCount++;
+                    
+                    // Limit to first 10 trade IDs to avoid huge payloads
+                    if (validCount >= 10) {
+                        tradeIds.append(" (and ").append(messages.size() - validCount).append(" more)");
+                        break;
+                    }
+                }
+            }
+            
+            // Build error event with trade context
+            String detailedMessage = errorMessage;
+            if (validCount > 0) {
+                detailedMessage = String.format("%s (affected trades: %s, batch size: %d)", 
+                                               errorMessage, tradeIds.toString(), messages.size());
+            } else {
+                detailedMessage = String.format("%s (batch size: %d, all invalid)", 
+                                               errorMessage, messages.size());
+            }
+            
+            ErrorEventPayload errorEvent = ErrorEventPayload.builder()
+                    .serviceName(serviceName)
+                    .errorType(errorType)
+                    .errorMessage(detailedMessage)
+                    .eventStage(EventStage.RECEIVED)
+                    .build();
+
+            rttmClient.sendErrorEvent(errorEvent);
+            log.warn("RTTM[ERROR] type={} batchSize={} validTrades={} message={}", 
+                    errorType, messages.size(), validCount, errorMessage);
+        } catch (Exception ex) {
+            log.warn("RTTM[ERROR] FAILED: {}", ex.getMessage());
         }
     }
 }

@@ -2,11 +2,15 @@ package com.pms.pms_trade_capture.config;
 
 import io.confluent.kafka.serializers.protobuf.KafkaProtobufSerializer;
 import io.confluent.kafka.serializers.protobuf.KafkaProtobufSerializerConfig;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
@@ -22,6 +26,18 @@ public class KafkaConfig {
 
     @Value("${spring.kafka.properties.schema.registry.url}")
     private String schemaRegistryUrl;
+    
+    @Value("${spring.kafka.producer.properties.max.in.flight.requests.per.connection:5}")
+    private int maxInFlightRequests;
+    
+    @Value("${spring.kafka.producer.properties.linger.ms:20}")
+    private int lingerMs;
+    
+    @Value("${spring.kafka.producer.properties.batch.size:65536}")
+    private int batchSize;
+    
+    @Value("${spring.kafka.consumer.group-id:trade-capture-consumer}")
+    private String metricsConsumerGroupId;
 
 
     public ProducerFactory<String, TradeEventProto> producerFactory() {
@@ -36,18 +52,35 @@ public class KafkaConfig {
         config.put(ProducerConfig.ACKS_CONFIG, "all");
         config.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
         config.put(ProducerConfig.RETRIES_CONFIG, Integer.MAX_VALUE);
-        config.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 5);
+        config.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, maxInFlightRequests);
 
         // Throughput Tuning (Batching)
-        config.put(ProducerConfig.LINGER_MS_CONFIG, 20);           // Wait up to 20ms to group messages
-        config.put(ProducerConfig.BATCH_SIZE_CONFIG, 64 * 1024);   // 64KB batch size
+        config.put(ProducerConfig.LINGER_MS_CONFIG, lingerMs);
+        config.put(ProducerConfig.BATCH_SIZE_CONFIG, batchSize);
         config.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "gzip");
 
         return new DefaultKafkaProducerFactory<>(config);
 
     }
-    @Bean
-    public KafkaTemplate<String, TradeEventProto> kafkaTemplate() {
+    
+    @Bean(name = "tradeEventKafkaTemplate")
+    @Primary
+    public KafkaTemplate<String, TradeEventProto> tradeEventKafkaTemplate() {
         return new KafkaTemplate<>(producerFactory());
+    }
+
+    /**
+     * Kafka consumer bean for queue metrics monitoring
+     * Used by QueueMetricsService to query offset positions
+     */
+    @Bean
+    public KafkaConsumer<String, String> metricsConsumer() {
+        Map<String, Object> config = new HashMap<>();
+        config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        config.put(ConsumerConfig.GROUP_ID_CONFIG, metricsConsumerGroupId + "-metrics");
+        config.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        return new KafkaConsumer<>(config);
     }
 }

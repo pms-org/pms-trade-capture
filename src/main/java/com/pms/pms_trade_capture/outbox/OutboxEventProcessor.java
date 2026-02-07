@@ -10,8 +10,10 @@ import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.errors.SerializationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
 
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -19,6 +21,9 @@ import com.pms.pms_trade_capture.domain.OutboxEvent;
 import com.pms.pms_trade_capture.dto.BatchProcessingResult;
 import com.pms.pms_trade_capture.exception.PoisonPillException;
 import com.pms.pms_trade_capture.exception.SystemFailureException;
+import com.pms.rttm.client.clients.RttmClient;
+import com.pms.rttm.client.dto.DlqEventPayload;
+import com.pms.rttm.client.enums.EventStage;
 import com.pms.trade_capture.proto.TradeEventProto;
 
 /**
@@ -30,6 +35,7 @@ public class OutboxEventProcessor {
     private static final Logger log = LoggerFactory.getLogger(OutboxEventProcessor.class);
 
     private final KafkaTemplate<String, TradeEventProto> kafkaTemplate;
+    private final RttmClient rttmClient;
 
     @Value("${app.outbox.trade-topic}")
     private String tradeTopic;
@@ -37,8 +43,17 @@ public class OutboxEventProcessor {
     @Value("${app.outbox.kafka-send-timeout-ms:5000}")
     private long kafkaSendTimeoutMs;
 
-    public OutboxEventProcessor(KafkaTemplate<String, TradeEventProto> kafkaTemplate) {
+    @Value("${spring.application.name}")
+    private String serviceName;
+    
+    @Value("${app.dlq-topic-outbox:trade-capture-dlq}")
+    private String rttmDlqTopicOutbox;
+
+    public OutboxEventProcessor(
+            @Qualifier("tradeEventKafkaTemplate") KafkaTemplate<String, TradeEventProto> kafkaTemplate,
+            RttmClient rttmClient) {
         this.kafkaTemplate = kafkaTemplate;
+        this.rttmClient = rttmClient;
     }
 
     /**
@@ -60,6 +75,10 @@ public class OutboxEventProcessor {
                 // POISON PILL: This event is permanently broken
                 // Return what succeeded so far + this poison pill for DLQ routing
                 log.error("Poison pill detected: Event ID={}, Error={}", event.getId(), ppe.getMessage());
+                
+                // Send DLQ event to RTTM
+                sendDlqEventToRttm(event, ppe.getMessage());
+                
                 return BatchProcessingResult.withPoisonPill(successfulIds, ppe);
 
             } catch (SystemFailureException sfe) {
@@ -89,10 +108,13 @@ public class OutboxEventProcessor {
             String key = event.getPortfolioId().toString();
 
             // 2. Blocking send with timeout
-            kafkaTemplate.send(tradeTopic, key, proto)
+            SendResult<String, TradeEventProto> result = kafkaTemplate.send(tradeTopic, key, proto)
                     .get(kafkaSendTimeoutMs, TimeUnit.MILLISECONDS);
 
-            log.debug("Sent event {} to Kafka topic {}", event.getId(), tradeTopic);
+            log.debug("Sent event {} to Kafka topic {} partition {} offset {}", 
+                     event.getId(), tradeTopic,
+                     result.getRecordMetadata().partition(),
+                     result.getRecordMetadata().offset());
 
         } catch (InvalidProtocolBufferException e) {
             // Corrupt payload in DB = POISON PILL
@@ -159,5 +181,28 @@ public class OutboxEventProcessor {
         // Everything else is assumed to be a transient failure
 
         throw new SystemFailureException("Kafka system failure: " + errorMsg, cause);
+    }
+
+    /**
+     * Send DLQ event to RTTM when poison pill is detected
+     */
+    private void sendDlqEventToRttm(OutboxEvent event, String errorReason) {
+        try {
+            DlqEventPayload dlqEvent = DlqEventPayload.builder()
+                    .serviceName(serviceName)
+                    .tradeId(event.getTradeId().toString())
+                    .topicName(rttmDlqTopicOutbox)
+                    .originalTopic(tradeTopic)
+                    .reason(errorReason)
+                    .eventStage(EventStage.RECEIVED)
+                    .build();
+
+            rttmClient.sendDlqEvent(dlqEvent);
+            log.info("RTTM[DLQ_OUTBOX] tradeId={} eventId={} topic={} reason={}", 
+                    event.getTradeId(), event.getId(), rttmDlqTopicOutbox, errorReason);
+        } catch (Exception ex) {
+            log.warn("RTTM[DLQ_OUTBOX] FAILED tradeId={} eventId={}: {}", 
+                    event.getTradeId(), event.getId(), ex.getMessage());
+        }
     }
 }

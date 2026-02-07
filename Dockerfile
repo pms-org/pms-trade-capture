@@ -2,14 +2,17 @@
 FROM maven:3.9-eclipse-temurin-21 AS builder
 WORKDIR /app
 
-# Copy pom first to cache dependencies
+# Copy pom and proto files first to cache dependencies
 COPY pom.xml .
-RUN mvn dependency:go-offline
+COPY src/main/proto ./src/main/proto
 
-# Copy source and build
+# Download dependencies and compile proto (this layer will be cached unless pom.xml or proto changes)
+RUN mvn dependency:go-offline -DskipTests && \
+    mvn protobuf:compile -DskipTests
+
+# Copy rest of source and build (only this layer rebuilds when code changes)
 COPY src ./src
-# Generate Protobuf sources and build jar
-RUN mvn clean package -DskipTests
+RUN mvn package -DskipTests -Dprotobuf.skip=true -o
 
 # Stage 2: Runtime
 FROM eclipse-temurin:21-jre-alpine

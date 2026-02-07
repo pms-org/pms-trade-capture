@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +20,9 @@ import com.pms.pms_trade_capture.repository.DlqRepository;
 import com.pms.pms_trade_capture.repository.OutboxRepository;
 import com.pms.pms_trade_capture.repository.SafeStoreRepository;
 import com.pms.pms_trade_capture.utils.AppMetrics;
+import com.pms.rttm.client.clients.RttmClient;
+import com.pms.rttm.client.dto.DlqEventPayload;
+import com.pms.rttm.client.enums.EventStage;
 import com.pms.trade_capture.proto.TradeEventProto;
 
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
@@ -31,17 +35,26 @@ public class BatchPersistenceService {
     private final OutboxRepository outboxRepository;
     private final DlqRepository dlqRepository;
     private final AppMetrics metrics;
+    private final RttmClient rttmClient;
+
+    @Value("${spring.application.name}")
+    private String serviceName;
+    
+    @Value("${app.dlq-topic-ingestion:trade-capture-ingestion-dlq}")
+    private String rttmDlqTopicIngestion;
 
     private static final String CB_NAME = "pmsDb";
 
     public BatchPersistenceService(SafeStoreRepository safeStoreRepository,
             OutboxRepository outboxRepository,
             DlqRepository dlqRepository,
-            AppMetrics metrics) {
+            AppMetrics metrics,
+            RttmClient rttmClient) {
         this.safeStoreRepository = safeStoreRepository;
         this.outboxRepository = outboxRepository;
         this.dlqRepository = dlqRepository;
         this.metrics = metrics;
+        this.rttmClient = rttmClient;
     }
 
     /**
@@ -117,7 +130,12 @@ public class BatchPersistenceService {
         try {
             DlqEntry entry = new DlqEntry(msg.getRawMessageBytes(), errorReason);
             dlqRepository.save(entry);
-            log.warn("Level 3 Success: Message {} saved to DLQ.", msg.getOffset());
+            
+            // Send DLQ event to RTTM with trade ID if available
+            sendDlqEventToRttm(msg, errorReason);
+            
+            log.warn("DLQ: Message {} saved | Reason: {}", msg.getOffset(), errorReason);
+            
         } catch (Exception e) {
             // --- LEVEL 4: NUCLEAR OPTION (Disk Log) ---
             // If we can't write to DB, we MUST log the payload bytes to disk/console.
@@ -144,5 +162,36 @@ public class BatchPersistenceService {
         for (byte b : bytes)
             sb.append(String.format("%02X", b));
         return sb.toString();
+    }
+
+    /**
+     * Send DLQ event to RTTM for monitoring.
+     * Extracts trade ID from message if valid, uses "UNKNOWN" otherwise.
+     */
+    private void sendDlqEventToRttm(PendingStreamMessage msg, String reason) {
+        try {
+            String tradeId = "UNKNOWN";
+            
+            // Try to extract trade ID from valid message
+            if (msg.isValid() && msg.getTrade() != null) {
+                tradeId = msg.getTrade().getTradeId();
+            }
+            
+            DlqEventPayload dlqEvent = DlqEventPayload.builder()
+                    .serviceName(serviceName)
+                    .tradeId(tradeId)
+                    .topicName(rttmDlqTopicIngestion)
+                    .reason(reason)
+                    .eventStage(EventStage.RECEIVED)
+                    .build();
+            
+            rttmClient.sendDlqEvent(dlqEvent);
+            log.info("RTTM[DLQ_INGESTION] tradeId={} offset={} topic={} reason={}", 
+                    tradeId, msg.getOffset(), rttmDlqTopicIngestion, reason);
+        } catch (Exception e) {
+            log.warn("RTTM[DLQ_INGESTION] FAILED tradeId={}: {}", 
+                    msg.isValid() && msg.getTrade() != null ? msg.getTrade().getTradeId() : "UNKNOWN", 
+                    e.getMessage());
+        }
     }
 }

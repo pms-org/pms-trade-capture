@@ -1,0 +1,265 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pms-trade-capture-config
+  namespace: pms
+data:
+  # Application Configuration
+  SERVER_PORT: "8082"
+  SPRING_PROFILES_ACTIVE: "production"
+  
+  # Database Configuration
+  DB_HOST: "pms-postgres-service"
+  DB_PORT: "5432"
+  DB_NAME: "pmsdb"
+  DB_DDL_AUTO: "validate"
+  TRADE_CAPTURE_POOL_SIZE: "20"
+  TRADE_CAPTURE_BATCH_SIZE: "500"
+  
+  # Kafka Configuration
+  KAFKA_BOOTSTRAP_SERVERS: "pms-kafka-service:9092"
+  SCHEMA_REGISTRY_URL: "http://pms-schema-registry-service:8081"
+  KAFKA_CONSUMER_GROUP_ID: "trade-capture-consumer"
+  KAFKA_PRODUCER_MAX_IN_FLIGHT: "5"
+  KAFKA_PRODUCER_LINGER_MS: "20"
+  KAFKA_PRODUCER_BATCH_SIZE: "65536"
+  
+  # RabbitMQ Stream Configuration
+  RABBITMQ_STREAM_NAME: "trade-stream"
+  RABBITMQ_HOST: "pms-rabbitmq-service"
+  RABBITMQ_STREAM_PORT: "5552"
+  RABBITMQ_USERNAME: "guest"
+  TRADE_CAPTURE_CONSUMER_GROUP: "trade-capture-group"
+  
+  # RTTM Configuration
+  RTTM_MODE: "kafka"
+  KAFKA_TOPIC_TRADE_EVENTS: "rttm.trade.events"
+  KAFKA_TOPIC_DLQ_EVENTS: "rttm.dlq.events"
+  KAFKA_TOPIC_QUEUE_METRICS: "rttm.queue.metrics"
+  KAFKA_TOPIC_ERROR_EVENTS: "rttm.error.events"
+  RTTM_SEND_TIMEOUT_MS: "3000"
+  RTTM_RETRY_MAX_ATTEMPTS: "3"
+  RTTM_RETRY_BACKOFF_MS: "100"
+  RTTM_METRICS_INTERVAL_MS: "30000"
+  
+  # Topic Configuration
+  INCOMING_TRADES_TOPIC: "raw-trades-topic"
+  RTTM_DLQ_TOPIC_INGESTION: "trade-capture-ingestion-dlq"
+  RTTM_DLQ_TOPIC_OUTBOX: "trade-capture-dlq"
+  
+  # Batch Processing Configuration
+  INGEST_BATCH_MAX_SIZE: "500"
+  INGEST_BATCH_FLUSH_INTERVAL: "100"
+  INGEST_BATCH_DRAIN_SIZE: "500"
+  INGEST_RESUME_THRESHOLD: "1000"
+  INGEST_CIRCUIT_RETRY_DELAY: "5000"
+  
+  # Outbox Configuration
+  OUTBOX_MAX_RETRIES: "3"
+  OUTBOX_TARGET_LATENCY: "200"
+  OUTBOX_MIN_BATCH: "10"
+  OUTBOX_MAX_BATCH: "2000"
+  OUTBOX_POLL_INTERVAL: "100"
+  OUTBOX_BATCH_SIZE: "200"
+  OUTBOX_CONCURRENCY: "4"
+  
+  # JVM Configuration
+  JAVA_OPTS: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pms-trade-capture-secret
+  namespace: pms
+type: Opaque
+stringData:
+  DB_USERNAME: "pms"
+  DB_PASSWORD: "pms"
+  RABBITMQ_PASSWORD: "guest"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pms-trade-capture
+  namespace: pms
+  labels:
+    app: pms-trade-capture
+    version: v1
+    component: trade-capture
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: pms-trade-capture
+  template:
+    metadata:
+      labels:
+        app: pms-trade-capture
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      serviceAccountName: pms-trade-capture-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      
+      containers:
+      - name: pms-trade-capture
+        image: ghcr.io/pms-org/pms-trade-capture:latest
+        imagePullPolicy: Always
+        
+        ports:
+        - name: http
+          containerPort: 8082
+          protocol: TCP
+        
+        envFrom:
+        - configMapRef:
+            name: pms-trade-capture-config
+        - secretRef:
+            name: pms-trade-capture-secret
+        
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: http
+          initialDelaySeconds: 120
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        startupProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+        
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+      
+      volumes:
+      - name: logs
+        emptyDir: {}
+      
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - pms-trade-capture
+              topologyKey: kubernetes.io/hostname
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pms-trade-capture-service
+  namespace: pms
+  labels:
+    app: pms-trade-capture
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8082
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: pms-trade-capture
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pms-trade-capture-sa
+  namespace: pms
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pms-trade-capture-pdb
+  namespace: pms
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: pms-trade-capture
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: pms-trade-capture-hpa
+  namespace: pms
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: pms-trade-capture
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
