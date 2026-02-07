@@ -34,7 +34,7 @@ spring:
 
   # Kafka (Producer)
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: io.confluent.kafka.serializers.protobuf.KafkaProtobufSerializer
@@ -47,7 +47,7 @@ spring:
     consumer:
       group-id: ${KAFKA_CONSUMER_GROUP_ID:trade-capture-consumer}
     properties:
-      schema.registry.url: ${SCHEMA_REGISTRY_URL:http://localhost:8081}
+      schema.registry.url: ${SCHEMA_REGISTRY_URL:http://schema-registry:8081}
   dokcer:
     compose:
       enabled: false
@@ -55,7 +55,7 @@ spring:
 rttm:
   client:
     mode: ${RTTM_MODE:kafka}
-    kafka-bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    kafka-bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     kafka-topic-trade-events: ${KAFKA_TOPIC_TRADE_EVENTS:rttm.trade.events}
     kafka-topic-dlq-events: ${KAFKA_TOPIC_DLQ_EVENTS:rttm.dlq.events}
     kafka-topic-queue-metrics: ${KAFKA_TOPIC_QUEUE_METRICS:rttm.queue.metrics}
